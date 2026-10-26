@@ -127,9 +127,52 @@ def get_machine_health(conn: sqlite3.Connection, machine_id: int) -> dict[str, A
             (machine_id,),
         )
     ]
+    
+    # Get specialty drink (most brewed, with tie detection)
+    specialty_drink = None
+    if brews["count"] > 0:
+        # Get top drink with alphabetical tie-breaking
+        top_drink = conn.execute(
+            """
+            SELECT dt.name, dt.label, COUNT(be.id) AS count
+            FROM brew_events be
+            JOIN drink_types dt ON be.drink_type = dt.name
+            WHERE be.machine_id = ?
+            GROUP BY be.drink_type
+            ORDER BY COUNT(be.id) DESC, dt.name ASC
+            LIMIT 1
+            """,
+            (machine_id,),
+        ).fetchone()
+        
+        if top_drink:
+            top_count = top_drink["count"]
+            # Check if there's a tie (another drink with same count)
+            tie_check = conn.execute(
+                """
+                SELECT COUNT(*) AS tied_count
+                FROM (
+                    SELECT COUNT(be.id) AS count
+                    FROM brew_events be
+                    WHERE be.machine_id = ?
+                    GROUP BY be.drink_type
+                    HAVING COUNT(be.id) = ?
+                )
+                """,
+                (machine_id, top_count),
+            ).fetchone()
+            is_tied = tie_check["tied_count"] > 1 if tie_check else False
+            
+            specialty_drink = {
+                "label": top_drink["label"],
+                "count": top_count,
+                "is_tied": is_tied,
+            }
+    
     return machine | {
         "brew_count": brews["count"],
         "last_brew": brews["last_brew"],
+        "specialty_drink": specialty_drink,
         "last_maintenance": dict(last_maintenance) if last_maintenance else None,
         "recent_errors": recent_errors,
     }

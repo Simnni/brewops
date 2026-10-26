@@ -2,7 +2,7 @@
 
 import sqlite3
 from contextlib import asynccontextmanager, closing
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import uvicorn
@@ -54,6 +54,12 @@ def parse_timestamp(value: str) -> str:
     return ts.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def check_range(start: date | None, end: date | None) -> None:
+    """Validate date range: start must not be after end."""
+    if start is not None and end is not None and start > end:
+        raise HTTPException(400, "start must not be after end")
+
+
 class BrewIn(BaseModel):
     machine_id: int
     drink_type: str
@@ -71,8 +77,9 @@ class MaintenanceIn(BaseModel):
 
 
 @app.get("/api/stats")
-def stats(conn: sqlite3.Connection = Depends(get_db)):
-    return queries.get_stats(conn)
+def stats(start: date | None = None, end: date | None = None, conn: sqlite3.Connection = Depends(get_db)):
+    check_range(start, end)
+    return queries.get_stats(conn, start.isoformat() if start else None, end.isoformat() if end else None)
 
 
 @app.get("/api/machines")
@@ -81,8 +88,9 @@ def machines(conn: sqlite3.Connection = Depends(get_db)):
 
 
 @app.get("/api/machines/{machine_id}")
-def machine_health(machine_id: int, conn: sqlite3.Connection = Depends(get_db)):
-    health = queries.get_machine_health(conn, machine_id)
+def machine_health(machine_id: int, start: date | None = None, end: date | None = None, conn: sqlite3.Connection = Depends(get_db)):
+    check_range(start, end)
+    health = queries.get_machine_health(conn, machine_id, start.isoformat() if start else None, end.isoformat() if end else None)
     if health is None:
         raise HTTPException(404, f"no machine with id {machine_id}")
     return health

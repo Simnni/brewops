@@ -15,14 +15,27 @@
   <main>
     <!-- Zone 1: dashboard -->
     <section id="dashboard">
+      <div class="panel filter-bar" id="date-filter">
+        <label for="filter-start">From</label>
+        <input type="date" id="filter-start">
+        <label for="filter-end">To</label>
+        <input type="date" id="filter-end">
+        <div class="presets" role="group" aria-label="Quick ranges">
+          <button type="button" id="filter-7d">Last 7 days</button>
+          <button type="button" id="filter-30d">Last 30 days</button>
+          <button type="button" id="filter-all" class="active">All time</button>
+        </div>
+        <p id="filter-message" class="message" role="status"></p>
+      </div>
+
       <div class="stat-tiles">
         <div class="tile">
           <span class="tile-number" id="total-brews">–</span>
-          <span class="tile-label">brews total</span>
+          <span class="tile-label" id="total-label">brews total</span>
         </div>
         <div class="tile">
           <span class="tile-number" id="brews-today">–</span>
-          <span class="tile-label">brews on last active day</span>
+          <span class="tile-label" id="today-label">brews on last active day</span>
         </div>
         <div class="tile">
           <span class="tile-number" id="machine-count">–</span>
@@ -39,6 +52,7 @@
         <h2>Brews over time</h2>
         <svg id="timeline" viewBox="0 0 600 130" preserveAspectRatio="none" role="img"
              aria-label="Brews per day"></svg>
+        <p id="timeline-empty" class="empty-note" hidden>No brews in this range.</p>
       </div>
 
       <div class="panel">

@@ -118,3 +118,51 @@ def test_post_maintenance(db):
         "timestamp": "2026-06-06 09:00:00",
     })
     assert r.status == 400
+
+
+def test_stats_with_date_range(db):
+    r = request(app, "GET", "/api/stats?start=2026-06-02&end=2026-06-02")
+    assert r.status == 200
+    stats = r.json()
+    assert stats["total_brews"] == 1
+    assert stats["per_day"] == [{"day": "2026-06-02", "count": 1}]
+
+
+def test_stats_empty_range(db):
+    r = request(app, "GET", "/api/stats?start=2026-07-01&end=2026-07-31")
+    assert r.status == 200
+    stats = r.json()
+    assert stats["total_brews"] == 0
+    assert stats["per_day"] == []
+    # All drinks should still be present with count 0
+    assert len(stats["per_drink"]) == 6
+    assert all(d["count"] == 0 for d in stats["per_drink"])
+
+
+def test_stats_start_after_end_returns_400(db):
+    r = request(app, "GET", "/api/stats?start=2026-06-05&end=2026-06-01")
+    assert r.status == 400
+    assert "start must not be after end" in r.json()["detail"]
+
+
+def test_stats_malformed_date_returns_422(db):
+    r = request(app, "GET", "/api/stats?start=banana")
+    assert r.status == 422
+
+
+def test_machine_health_with_date_range(db):
+    r = request(app, "GET", "/api/machines/1?start=2026-06-02&end=2026-06-02")
+    assert r.status == 200
+    health = r.json()
+    assert health["brew_count"] == 0
+    # last_brew is all-time, so it's the 2026-06-01 brew
+    assert health["last_brew"] == "2026-06-01 09:00:00"
+    # last_maintenance is unfiltered
+    assert health["last_maintenance"]["type"] == "descale"
+
+
+def test_machine_health_start_after_end_returns_400(db):
+    r = request(app, "GET", "/api/machines/1?start=2026-06-05&end=2026-06-01")
+    assert r.status == 400
+    assert "start must not be after end" in r.json()["detail"]
+

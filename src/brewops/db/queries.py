@@ -1,7 +1,26 @@
 """Read and write queries. All timestamps are naive local time strings."""
 
 import sqlite3
+from datetime import date, timedelta
 from typing import Any
+
+
+def _range_clause(column: str, start: str | None, end: str | None) -> tuple[str, list[str]]:
+    """Return (conditions, params) limiting `column` to [start, end] inclusive by calendar day.
+    start/end are 'YYYY-MM-DD' or None. conditions is '' when neither is given."""
+    conditions = []
+    params = []
+    
+    if start is not None:
+        conditions.append(f"{column} >= ?")
+        params.append(start)
+    
+    if end is not None:
+        end_date = date.fromisoformat(end) + timedelta(days=1)
+        conditions.append(f"{column} < ?")
+        params.append(end_date.isoformat())
+    
+    return (" AND ".join(conditions), params)
 
 
 def get_machines(conn: sqlite3.Connection) -> list[dict[str, Any]]:
@@ -65,47 +84,80 @@ def insert_maintenance(
     return cur.lastrowid
 
 
-def get_stats(conn: sqlite3.Connection) -> dict[str, Any]:
+def get_stats(conn: sqlite3.Connection, start: str | None = None, end: str | None = None) -> dict[str, Any]:
     """Dashboard numbers: totals, per-drink, per-day."""
-    total = conn.execute("SELECT COUNT(*) AS n FROM brew_events").fetchone()["n"]
+    
+    # For total: use 'timestamp' since it's from brew_events directly
+    total_cond, total_params = _range_clause("timestamp", start, end)
+    
+    # For per-drink: use 'be.timestamp' since it's joining with the alias
+    drink_cond, drink_params = _range_clause("be.timestamp", start, end)
+    
+    # Total brews
+    where_clause = f"WHERE {total_cond}" if total_cond else ""
+    total = conn.execute(
+        f"SELECT COUNT(*) AS n FROM brew_events {where_clause}",
+        total_params
+    ).fetchone()["n"]
+    
+    # Per-drink (range goes into ON, not WHERE, to preserve 0 counts)
+    on_clause = f"AND {drink_cond}" if drink_cond else ""
     per_drink = [
         dict(r)
         for r in conn.execute(
-            """
+            f"""
             SELECT dt.name, dt.label, COUNT(be.id) AS count
             FROM drink_types dt
-            LEFT JOIN brew_events be ON be.drink_type = dt.name
+            LEFT JOIN brew_events be ON be.drink_type = dt.name {on_clause}
             GROUP BY dt.id
             ORDER BY dt.id
-            """
+            """,
+            drink_params
         )
     ]
+    
+    # Per-day
+    where_clause = f"WHERE {total_cond}" if total_cond else ""
     per_day = [
         dict(r)
         for r in conn.execute(
-            """
+            f"""
             SELECT DATE(timestamp) AS day, COUNT(*) AS count
             FROM brew_events
+            {where_clause}
             GROUP BY DATE(timestamp)
             ORDER BY day
-            """
+            """,
+            total_params
         )
     ]
     return {"total_brews": total, "per_drink": per_drink, "per_day": per_day}
 
 
-def get_machine_health(conn: sqlite3.Connection, machine_id: int) -> dict[str, Any] | None:
+def get_machine_health(conn: sqlite3.Connection, machine_id: int, start: str | None = None, end: str | None = None) -> dict[str, Any] | None:
     """Machine card: brew activity plus maintenance history."""
     machine = get_machine(conn, machine_id)
     if machine is None:
         return None
+    
+    # Use plain 'timestamp' for direct table queries, 'be.timestamp' for aliased queries
+    direct_cond, direct_params = _range_clause("timestamp", start, end)
+    alias_cond, alias_params = _range_clause("be.timestamp", start, end)
+    
+    # Brew count (filtered by range)
+    where_clause = f"WHERE machine_id = ?" if not direct_cond else f"WHERE machine_id = ? AND {direct_cond}"
+    brew_count_params = [machine_id] + direct_params
     brews = conn.execute(
-        """
-        SELECT COUNT(*) AS count, MAX(timestamp) AS last_brew
-        FROM brew_events WHERE machine_id = ?
-        """,
-        (machine_id,),
+        f"SELECT COUNT(*) AS count FROM brew_events {where_clause}",
+        brew_count_params
     ).fetchone()
+    
+    # Last brew (all-time, unfiltered)
+    last_brew = conn.execute(
+        "SELECT MAX(timestamp) AS last_brew FROM brew_events WHERE machine_id = ?",
+        (machine_id,)
+    ).fetchone()["last_brew"]
+    
     last_maintenance = conn.execute(
         """
         SELECT type, timestamp, note, error_code
@@ -128,38 +180,42 @@ def get_machine_health(conn: sqlite3.Connection, machine_id: int) -> dict[str, A
         )
     ]
     
-    # Get specialty drink (most brewed, with tie detection)
+    # Get specialty drink (most brewed, with tie detection) - filtered by range
     specialty_drink = None
     if brews["count"] > 0:
         # Get top drink with alphabetical tie-breaking
+        top_drink_params = [machine_id] + alias_params
+        top_drink_where = f"WHERE be.machine_id = ?" if not alias_cond else f"WHERE be.machine_id = ? AND {alias_cond}"
         top_drink = conn.execute(
-            """
+            f"""
             SELECT dt.name, dt.label, COUNT(be.id) AS count
             FROM brew_events be
             JOIN drink_types dt ON be.drink_type = dt.name
-            WHERE be.machine_id = ?
+            {top_drink_where}
             GROUP BY be.drink_type
             ORDER BY COUNT(be.id) DESC, dt.name ASC
             LIMIT 1
             """,
-            (machine_id,),
+            top_drink_params
         ).fetchone()
         
         if top_drink:
             top_count = top_drink["count"]
             # Check if there's a tie (another drink with same count)
+            tie_check_params = [machine_id] + alias_params + [top_count]
+            tie_check_where = f"WHERE be.machine_id = ?" if not alias_cond else f"WHERE be.machine_id = ? AND {alias_cond}"
             tie_check = conn.execute(
-                """
+                f"""
                 SELECT COUNT(*) AS tied_count
                 FROM (
                     SELECT COUNT(be.id) AS count
                     FROM brew_events be
-                    WHERE be.machine_id = ?
+                    {tie_check_where}
                     GROUP BY be.drink_type
                     HAVING COUNT(be.id) = ?
                 )
                 """,
-                (machine_id, top_count),
+                tie_check_params
             ).fetchone()
             is_tied = tie_check["tied_count"] > 1 if tie_check else False
             
@@ -171,7 +227,7 @@ def get_machine_health(conn: sqlite3.Connection, machine_id: int) -> dict[str, A
     
     return machine | {
         "brew_count": brews["count"],
-        "last_brew": brews["last_brew"],
+        "last_brew": last_brew,
         "specialty_drink": specialty_drink,
         "last_maintenance": dict(last_maintenance) if last_maintenance else None,
         "recent_errors": recent_errors,

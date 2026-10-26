@@ -11,6 +11,8 @@ async function fetchJSON(url, options) {
 
 // ---- dashboard ----
 
+let loadSeq = 0;
+
 function renderDrinkBars(perDrink) {
   const container = document.getElementById("drink-bars");
   container.innerHTML = "";
@@ -28,12 +30,21 @@ function renderDrinkBars(perDrink) {
 
 function renderTimeline(perDay) {
   const svg = document.getElementById("timeline");
+  const emptyNote = document.getElementById("timeline-empty");
   svg.innerHTML = "";
-  if (perDay.length === 0) return;
+  
+  if (perDay.length === 0) {
+    emptyNote.removeAttribute("hidden");
+    return;
+  }
+  
+  emptyNote.setAttribute("hidden", "");
+  
   const width = 600;
   const height = 130;
-  const max = Math.max(...perDay.map((d) => d.count));
+  const max = Math.max(1, ...perDay.map((d) => d.count));
   const barWidth = width / perDay.length;
+  
   perDay.forEach((day, i) => {
     const barHeight = (day.count / max) * (height - 10);
     const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
@@ -78,17 +89,64 @@ function renderMachineCards(healths) {
 }
 
 async function loadDashboard() {
-  const stats = await fetchJSON("/api/stats");
-  document.getElementById("total-brews").textContent = stats.total_brews;
-  const lastDay = stats.per_day[stats.per_day.length - 1];
-  document.getElementById("brews-today").textContent = lastDay ? lastDay.count : 0;
-  renderDrinkBars(stats.per_drink);
-  renderTimeline(stats.per_day);
-
-  const machines = await fetchJSON("/api/machines");
-  document.getElementById("machine-count").textContent = machines.length;
-  const healths = await Promise.all(machines.map((m) => fetchJSON(`/api/machines/${m.id}`)));
-  renderMachineCards(healths);
+  const f = getFilter();
+  const q = filterQuery(f);
+  
+  // Validate date range
+  if (f.start && f.end && f.start > f.end) {
+    document.getElementById("filter-message").textContent = '"From" must not be after "To".';
+    document.getElementById("filter-message").className = "message error";
+    document.getElementById("filter-start").max = f.end;
+    document.getElementById("filter-end").min = f.start;
+    return;
+  }
+  
+  // Clear validation message on valid range
+  document.getElementById("filter-message").textContent = "";
+  document.getElementById("filter-message").className = "message";
+  document.getElementById("filter-start").max = f.end || "";
+  document.getElementById("filter-end").min = f.start || "";
+  
+  // Stale response guard
+  const mySeq = ++loadSeq;
+  
+  try {
+    const stats = await fetchJSON("/api/stats" + q);
+    if (mySeq !== loadSeq) return;
+    
+    document.getElementById("total-brews").textContent = stats.total_brews;
+    
+    // Update labels based on filter state
+    const hasFilter = f.start || f.end;
+    if (hasFilter) {
+      document.getElementById("total-label").textContent = "brews in range";
+      document.getElementById("today-label").textContent = "brews on last active day in range";
+    } else {
+      document.getElementById("total-label").textContent = "brews total";
+      document.getElementById("today-label").textContent = "brews on last active day";
+    }
+    
+    const lastDay = stats.per_day[stats.per_day.length - 1];
+    document.getElementById("brews-today").textContent = lastDay ? lastDay.count : 0;
+    
+    renderDrinkBars(stats.per_drink);
+    renderTimeline(fillDays(stats.per_day, f.start, f.end));
+    
+    if (mySeq !== loadSeq) return;
+    
+    const machines = await fetchJSON("/api/machines");
+    if (mySeq !== loadSeq) return;
+    
+    document.getElementById("machine-count").textContent = machines.length;
+    
+    const healths = await Promise.all(machines.map((m) => fetchJSON(`/api/machines/${m.id}` + q)));
+    if (mySeq !== loadSeq) return;
+    
+    renderMachineCards(healths);
+  } catch (error) {
+    document.getElementById("total-brews").textContent = "!";
+    console.error("Dashboard failed to load:", error);
+  }
 }
 
 // ---- forms ----
@@ -99,6 +157,61 @@ function localNow() {
   return now.toISOString().slice(0, 16); // datetime-local format
 }
 
+// ---- date filter ----
+
+function getFilter() {
+  return {
+    start: document.getElementById("filter-start").value || null,
+    end: document.getElementById("filter-end").value || null,
+  };
+}
+
+function filterQuery(f) {
+  const params = new URLSearchParams();
+  if (f.start) params.append("start", f.start);
+  if (f.end) params.append("end", f.end);
+  const query = params.toString();
+  return query ? "?" + query : "";
+}
+
+function localDateString(d) {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function fillDays(perDay, start, end) {
+  if (perDay.length === 0) return [];
+  
+  const from = start || perDay[0]?.day;
+  const to = end || perDay[perDay.length - 1]?.day;
+  
+  if (!from || !to) return [];
+  
+  const map = new Map(perDay.map((d) => [d.day, d.count]));
+  const result = [];
+  
+  const fromDate = new Date(from + "T00:00:00");
+  const toDate = new Date(to + "T00:00:00");
+  
+  // Safety cap: if span exceeds ~1000 days, return sparse data
+  const daySpan = Math.floor((toDate - fromDate) / (24 * 60 * 60 * 1000)) + 1;
+  if (daySpan > 1000) return perDay;
+  
+  const current = new Date(fromDate);
+  while (current <= toDate) {
+    const day = localDateString(current);
+    result.push({
+      day,
+      count: map.get(day) || 0,
+    });
+    current.setDate(current.getDate() + 1);
+  }
+  
+  return result;
+}
+
 function fillSelect(select, items, valueKey, labelKey) {
   select.innerHTML = "";
   for (const item of items) {
@@ -106,6 +219,64 @@ function fillSelect(select, items, valueKey, labelKey) {
     option.value = item[valueKey];
     option.textContent = item[labelKey];
     select.appendChild(option);
+  }
+}
+
+function setupFilter() {
+  const startInput = document.getElementById("filter-start");
+  const endInput = document.getElementById("filter-end");
+  const presets = {
+    "filter-7d": () => {
+      const today = new Date();
+      const end = localDateString(today);
+      const start = new Date(today);
+      start.setDate(start.getDate() - 6);
+      startInput.value = localDateString(start);
+      endInput.value = end;
+      updatePresetButtons("filter-7d");
+      loadDashboard();
+    },
+    "filter-30d": () => {
+      const today = new Date();
+      const end = localDateString(today);
+      const start = new Date(today);
+      start.setDate(start.getDate() - 29);
+      startInput.value = localDateString(start);
+      endInput.value = end;
+      updatePresetButtons("filter-30d");
+      loadDashboard();
+    },
+    "filter-all": () => {
+      startInput.value = "";
+      endInput.value = "";
+      updatePresetButtons("filter-all");
+      loadDashboard();
+    },
+  };
+  
+  for (const [id, handler] of Object.entries(presets)) {
+    document.getElementById(id).addEventListener("click", handler);
+  }
+  
+  startInput.addEventListener("change", () => {
+    updatePresetButtons(null);
+    loadDashboard();
+  });
+  
+  endInput.addEventListener("change", () => {
+    updatePresetButtons(null);
+    loadDashboard();
+  });
+}
+
+function updatePresetButtons(activeId) {
+  for (const id of ["filter-7d", "filter-30d", "filter-all"]) {
+    const btn = document.getElementById(id);
+    if (id === activeId) {
+      btn.classList.add("active");
+    } else {
+      btn.classList.remove("active");
+    }
   }
 }
 
@@ -160,4 +331,5 @@ loadDashboard().catch((error) => {
   document.getElementById("total-brews").textContent = "!";
   console.error("Dashboard failed to load:", error);
 });
+setupFilter();
 setupForms().catch((error) => console.error("Form setup failed:", error));

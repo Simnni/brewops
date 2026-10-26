@@ -52,3 +52,25 @@ def test_frontend_has_no_external_resources():
             content = content.replace(a, "")
         assert "http://" not in content, f.name
         assert "https://" not in content, f.name
+
+
+def test_frontend_has_date_filter_elements(db):
+    r = request(get_app(), "GET", "/")
+    assert r.status == 200
+    html = r.text
+    # Check for filter input elements
+    assert 'id="filter-start"' in html
+    assert 'id="filter-end"' in html
+    # Check for preset buttons
+    assert 'id="filter-7d"' in html
+    assert 'id="filter-30d"' in html
+    assert 'id="filter-all"' in html
+
+
+def test_frontend_app_has_filter_query_function(db):
+    r = request(get_app(), "GET", "/app.js")
+    assert r.status == 200
+    js = r.text
+    assert "filterQuery" in js
+    assert "/api/stats" in js
+

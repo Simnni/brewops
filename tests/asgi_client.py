@@ -22,6 +22,7 @@ class Response:
 
 def request(app, method: str, path: str, body: dict | None = None) -> Response:
     payload = json.dumps(body).encode() if body is not None else b""
+    path, _, query = path.partition("?")
     scope = {
         "type": "http",
         "asgi": {"version": "3.0"},
@@ -30,7 +31,7 @@ def request(app, method: str, path: str, body: dict | None = None) -> Response:
         "scheme": "http",
         "path": path,
         "raw_path": path.encode(),
-        "query_string": b"",
+        "query_string": query.encode(),
         "root_path": "",
         "headers": [
             (b"host", b"testserver"),

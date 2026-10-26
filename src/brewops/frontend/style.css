@@ -114,29 +114,39 @@ main {
   gap: 1.35rem;
 }
 
+/* Filter bar at the top */
+.filter-bar {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .6rem 1rem;
+}
+
 /* KPI band across the top */
 .stat-tiles {
   grid-column: 1 / -1;
-  grid-row: 1;
+  grid-row: 2;
 }
 
 /* hero row: wide trend chart + a narrower breakdown beside it */
 #dashboard > .panel:has(#timeline) {
   grid-column: 1;
-  grid-row: 2;
+  grid-row: 3;
   display: flex;
   flex-direction: column;
 }
 
 #dashboard > .panel:has(#drink-bars) {
   grid-column: 2;
-  grid-row: 2;
+  grid-row: 3;
 }
 
 /* fleet gallery spans full width below the hero row */
 #dashboard > .panel:has(#machine-cards) {
   grid-column: 1 / -1;
-  grid-row: 3;
+  grid-row: 4;
 }
 
 /* the two logging forms sit side by side under the dashboard */
@@ -177,6 +187,72 @@ main {
   height: 2px;
   background: linear-gradient(90deg, var(--brass), var(--crema));
   border-radius: 2px;
+}
+
+/* ---- filter bar: date range picker ---- */
+.filter-bar label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-soft);
+}
+
+.filter-bar input[type=date] {
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  color: var(--ink);
+  background: #fff;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.filter-bar input[type=date]:focus {
+  outline: none;
+  border-color: var(--brass);
+  box-shadow: 0 0 0 3px rgb(185 129 47 / 0.22);
+}
+
+.presets {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.presets button {
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--brass);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--brass);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.presets button:hover {
+  background: rgb(185 129 47 / 0.08);
+}
+
+.presets button.active {
+  background: linear-gradient(135deg, var(--brass), var(--brass-deep));
+  color: #fff8ee;
+  border-color: var(--brass-deep);
+}
+
+.filter-bar .message {
+  grid-column: auto;
+  flex-basis: 100%;
+}
+
+.empty-note {
+  text-align: center;
+  color: var(--ink-soft);
+  font-family: var(--serif);
+  font-style: italic;
+  margin: 1rem 0;
 }
 
 /* ---- stat tiles: fleet at a glance ---- */
